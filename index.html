@@ -58,9 +58,10 @@
         const BOSS_SIZE = 32;
         const PROJECTILE_WIDTH = 3;
         const PROJECTILE_HEIGHT = 8;
-        const ENEMY_SPAWN_RATE = 200; // Tiempo entre aparición de formaciones
+        const ENEMY_SPAWN_RATE = 200; // Frames entre aparición de formaciones
         const INITIAL_LIVES = 3;
-        const FORMATION_GROUP_SIZE = 3; // Cuántos enemigos por grupo
+        const MAX_LIVES = 5; // Nuevo límite máximo de vidas
+        const FORMATION_GROUP_SIZE = 3; 
 
         // === INICIALIZACIÓN ===
         const canvas = document.getElementById('gameCanvas');
@@ -76,14 +77,18 @@
         let lives = INITIAL_LIVES;
         let isGameOver = true;
         let player = null;
-        let formations = []; // Array para las formaciones de enemigos
-        let miniBoss = null; // Nuevo estado para el minijefe
+        let formations = []; 
         let powerUps = []; 
         let playerProjectiles = [];
         let enemyProjectiles = [];
         let mouseX = CANVAS_WIDTH / 2;
-        let mouseY = CANVAS_HEIGHT / 2; // Permitir movimiento libre
+        let mouseY = CANVAS_HEIGHT / 2; 
         let gameLoopId;
+        
+        let highscore = parseInt(localStorage.getItem('highscore')) || 0; // Cargar el récord
+        
+        // El minijefe ahora es una formación de 3 minijefes
+        let miniBossFormations = []; 
 
         // Función de utilidad para obtener un número aleatorio entre min y max (inclusive)
         function randomInt(min, max) {
@@ -130,32 +135,39 @@
                 this.height = PLAYER_SIZE;
                 this.baseSpeed = 4;
                 this.currentSpeed = this.baseSpeed;
-                this.baseFireRate = 20; // NO se usa para el disparo, solo para el estado de power-up
-                this.currentFireRate = this.baseFireRate;
-                this.isMultiShot = false; // Power-up permanente
-                this.tempSpeedBoostEndTime = 0;
-                this.tempFireRateBoostEndTime = 0;
-                this.color = '#00ffff'; // Cían
+                this.isMultiShot = false; 
+                this.tempShieldEndTime = 0; // Nuevo para el escudo
+                this.color = '#00ffff'; 
                 this.isAlive = true;
                 this.invulnerabilityTime = 0;
-                this.canShoot = true; // Controlar cadencia de disparo al hacer click
-                this.shotCooldown = 8; // Cooldown de frames entre disparos (para el click)
+                this.canShoot = true; 
+                this.shotCooldown = 8; 
+                
+                this.minions = []; // Minions del jugador
+                this.maxMinions = 3;
+            }
+
+            isInvulnerable() {
+                const currentTime = Date.now();
+                // Invulnerabilidad por golpe O Escudo de Power-up
+                return currentTime < this.invulnerabilityTime || currentTime < this.tempShieldEndTime;
             }
 
             update() {
                 if (!this.isAlive) return;
 
-                // --- Manejar Power-ups Temporales ---
                 const currentTime = Date.now();
-                this.currentSpeed = this.baseSpeed;
+                this.currentSpeed = this.baseSpeed; // Velocidad base (sin item de velocidad)
                 
-                if (currentTime < this.tempSpeedBoostEndTime) {
-                    this.currentSpeed = this.baseSpeed * 2.5; // Aumento de velocidad
-                }
-                
-                // Si el jugador está invulnerable, disminuir el tiempo de invulnerabilidad
-                if (currentTime < this.invulnerabilityTime) {
-                    this.color = (gameFrame % 10 < 5) ? '#ffffff' : '#00ffff'; // Efecto de parpadeo
+                // Efecto visual y lógica de invulnerabilidad/escudo
+                if (this.isInvulnerable()) {
+                    // Si el escudo está activo, color amarillo sólido
+                    if (currentTime < this.tempShieldEndTime) {
+                        this.color = '#ffff00'; 
+                    } else {
+                        // Si es invulnerabilidad por golpe, parpadeo cian/blanco
+                        this.color = (gameFrame % 10 < 5) ? '#ffffff' : '#00ffff'; 
+                    }
                 } else {
                     this.color = '#00ffff';
                 }
@@ -167,29 +179,26 @@
                 this.x += Math.min(Math.abs(dx), this.currentSpeed) * Math.sign(dx);
                 this.y += Math.min(Math.abs(dy), this.currentSpeed) * Math.sign(dy);
 
-                // Asegurar que la nave permanezca dentro de los límites
                 this.x = Math.max(this.width / 2, Math.min(CANVAS_WIDTH - this.width / 2, this.x));
                 this.y = Math.max(this.height / 2, Math.min(CANVAS_HEIGHT - this.height / 2, this.y));
 
-                // Manejar el cooldown de disparo (solo si hay powerup activo)
-                if (currentTime < this.tempFireRateBoostEndTime) {
-                     this.shotCooldown = 4; // Mayor cadencia temporal (más rápido)
-                } else {
-                     this.shotCooldown = 8; // Cadencia normal
-                }
+                // Manejar el cooldown de disparo 
+                this.shotCooldown = 8; 
+                
+                // Actualizar Minions
+                this.minions.forEach(m => m.update());
+                // Limpiar minions expirados
+                this.minions = this.minions.filter(m => m.isAlive);
             }
 
-            // Llamado por el evento de click
             triggerShot() {
                 if (!this.canShoot || !this.isAlive) return;
 
                 this.shoot();
                 this.canShoot = false;
                 
-                // Usamos el gameFrame para controlar el cooldown de disparo
                 const currentFrame = gameFrame;
                 
-                // Establece un timeout basado en el número de frames
                 const checkCooldown = () => {
                     if (gameFrame >= currentFrame + this.shotCooldown) {
                         this.canShoot = true;
@@ -202,10 +211,8 @@
             
             shoot() {
                 if (this.isMultiShot) {
-                    // Triple disparo en arco (-30, 0, 30 grados)
                     const angleRad = Math.PI / 180;
                     const speed = 6;
-                    
                     const angles = [angleRad * -30, angleRad * 0, angleRad * 30];
                     
                     angles.forEach(angle => {
@@ -215,7 +222,6 @@
                         playerProjectiles.push(projectile);
                     });
                 } else {
-                    // Disparo simple
                     const projectile = new Projectile(this.x, this.y - this.height / 2, 0, -6, '#00ff00', true);
                     playerProjectiles.push(projectile);
                 }
@@ -223,68 +229,202 @@
 
             draw() {
                 if (!this.isAlive) return;
+                
+                // Dibujar Minions primero para que estén "detrás" o a los lados del jugador
+                this.minions.forEach(m => m.draw());
+                
                 ctx.fillStyle = this.color;
                 
-                // Dibujar nave como un pequeño triángulo retro
+                // Dibujar nave
                 ctx.beginPath();
-                ctx.moveTo(this.x, this.y - this.height / 2); // Punta superior
-                ctx.lineTo(this.x - this.width / 2, this.y + this.height / 2); // Esquina inferior izquierda
-                ctx.lineTo(this.x + this.width / 2, this.y + this.height / 2); // Esquina inferior derecha
+                ctx.moveTo(this.x, this.y - this.height / 2); 
+                ctx.lineTo(this.x - this.width / 2, this.y + this.height / 2); 
+                ctx.lineTo(this.x + this.width / 2, this.y + this.height / 2); 
                 ctx.closePath();
                 ctx.fill();
 
-                // Detalle central para un look más "retro"
+                // Detalle central
                 ctx.fillStyle = '#ffffff';
                 ctx.fillRect(this.x - 2, this.y - 2, 4, 4);
+                
+                // Dibujar el escudo visualmente si está activo
+                if (Date.now() < this.tempShieldEndTime) {
+                    ctx.strokeStyle = '#ffff00';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.width * 1.5, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
             }
 
             hit() {
-                if (Date.now() < this.invulnerabilityTime) return; // Si es invulnerable, ignorar el golpe
+                if (this.isInvulnerable()) return; 
 
                 lives--;
                 if (lives <= 0) {
                     this.isAlive = false;
                     isGameOver = true;
                 } else {
-                    // Invulnerabilidad temporal después de ser golpeado (e.g., 2 segundos)
+                    // 2 segundos de invulnerabilidad después de ser golpeado
                     this.invulnerabilityTime = Date.now() + 2000; 
                 }
             }
 
             applyPowerUp(type) {
-                const duration = 30000; // 30 segundos
                 const currentTime = Date.now();
                 
                 switch(type) {
-                    case 'speed':
-                        this.tempSpeedBoostEndTime = currentTime + duration;
-                        break;
-                    case 'fireRate':
-                        this.tempFireRateBoostEndTime = currentTime + duration; 
-                        // La cadencia se maneja en el update() y triggerShot()
-                        break;
                     case 'multiShot':
-                        this.isMultiShot = true; // Efecto permanente
+                        this.isMultiShot = true; 
                         break;
+                    case 'life': // Power-up de Vida
+                        if (lives < MAX_LIVES) {
+                            lives = Math.min(lives + 1, MAX_LIVES);
+                        } else {
+                            // Si ya tiene el máximo, aplica el escudo temporal (10s)
+                            this.tempShieldEndTime = currentTime + 10000; // REDUCIDO A 10s
+                        }
+                        break;
+                    case 'minion': // Nuevo Power-up de Minion
+                        if (this.minions.length < this.maxMinions) {
+                            this.addMinion();
+                        } else {
+                             // Si ya tiene el máximo de minions, aplica el escudo temporal (10s)
+                            this.tempShieldEndTime = currentTime + 10000; // REDUCIDO A 10s
+                        }
+                        break;
+                }
+            }
+            
+            addMinion() {
+                const minionDuration = 10000; // REDUCIDO A 10 segundos
+                const endTime = Date.now() + minionDuration;
+                
+                // positionIndex: 0 (Norte), 1 (Este), 2 (Oeste)
+                const positionIndex = this.minions.length; 
+                
+                if (positionIndex < this.maxMinions) {
+                    // Reiniciar la duración de todos los minions existentes
+                    this.minions.forEach(m => m.endTime = endTime);
+                    this.minions.push(new Minion(this, positionIndex, endTime));
                 }
             }
         }
 
+        // Clase Nave Minion (Mascota)
+        class Minion {
+            constructor(player, positionIndex, endTime) {
+                this.player = player;
+                this.positionIndex = positionIndex; // 0: N, 1: E, 2: W
+                this.endTime = endTime;
+                this.isAlive = true;
+                this.size = 12; 
+                this.color = '#ff8c00'; // Naranja
+                this.fireRate = 40; 
+                this.offsetDistance = 25; // Distancia del jugador
+                
+                this.x = 0;
+                this.y = 0;
+            }
+            
+            update() {
+                if (Date.now() > this.endTime) {
+                    this.isAlive = false;
+                    return;
+                }
+
+                // Definir offsets basados en la posición cardinal
+                let offsetX = 0;
+                let offsetY = 0;
+                
+                switch (this.positionIndex) {
+                    case 0: // Norte
+                        offsetX = 0;
+                        offsetY = -this.offsetDistance;
+                        break;
+                    case 1: // Este (Derecha)
+                        offsetX = this.offsetDistance;
+                        offsetY = 0;
+                        break;
+                    case 2: // Oeste (Izquierda)
+                        offsetX = -this.offsetDistance;
+                        offsetY = 0;
+                        break;
+                }
+                
+                this.x = this.player.x + offsetX;
+                this.y = this.player.y + offsetY;
+                
+                // Disparo automático
+                if (gameFrame % this.fireRate === 0 && this.player.isAlive) {
+                    this.shoot();
+                }
+            }
+            
+            shoot() {
+                const speed = 6;
+                const minionColor = this.color;
+
+                // El minion hereda el Power-Up de multidisparo del jugador
+                if (this.player.isMultiShot) {
+                    // 3-way shot like the player
+                    const angleRad = Math.PI / 180;
+                    const angles = [angleRad * -30, angleRad * 0, angleRad * 30];
+                    
+                    angles.forEach(angle => {
+                        const vx = Math.sin(angle) * speed;
+                        const vy = -Math.cos(angle) * speed;
+                        const projectile = new Projectile(this.x, this.y - this.size / 2, vx, vy, minionColor, true);
+                        playerProjectiles.push(projectile);
+                    });
+                } else {
+                    // Disparo simple vertical hacia arriba
+                    const projectile = new Projectile(this.x, this.y - this.size / 2, 0, -6, minionColor, true);
+                    playerProjectiles.push(projectile);
+                }
+            }
+            
+            draw() {
+                if (!this.isAlive) return;
+
+                ctx.fillStyle = this.color;
+                
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                
+                // Dibujar un rombo para el minion
+                ctx.rotate(Math.PI / 4); 
+                ctx.fillRect(-this.size / 2, -this.size / 2, this.size, this.size);
+                
+                // Indicador de vida restante
+                const remainingTime = this.endTime - Date.now();
+                if (remainingTime < 3000 && gameFrame % 10 < 5) { // Advertencia a los 3 segundos
+                     ctx.fillStyle = '#ff0000'; // Rojo si está a punto de expirar
+                } else {
+                     ctx.fillStyle = '#ffffff';
+                }
+                ctx.fillRect(-2, -2, 4, 4);
+                
+                ctx.restore();
+            }
+        }
+
+
         // Clase Base para Enemigos (Normales)
         class Enemy {
-            constructor(x, y, formation) {
+            constructor(x, y, formation, isBoss = false) {
                 this.x = x;
                 this.y = y;
-                this.width = ENEMY_SIZE;
-                this.height = ENEMY_SIZE;
-                this.vy = 0; // Movimiento vertical es controlado por la formación
-                this.vx = 0; // Movimiento horizontal es controlado por la formación
-                this.formation = formation; // Referencia a la formación
-                this.color = '#ff00ff'; // Magenta
+                this.width = isBoss ? BOSS_SIZE : ENEMY_SIZE;
+                this.height = isBoss ? BOSS_SIZE : ENEMY_SIZE;
+                this.formation = formation; 
+                this.isBoss = isBoss;
+                this.color = isBoss ? '#ffff00' : '#ff00ff';
                 this.isAlive = true;
-                this.fireRate = randomInt(100, 200); // Cadencia de disparo
-                this.value = 10;
-                this.isBoss = false;
+                this.fireRate = isBoss ? 50 : randomInt(100, 200); 
+                this.value = isBoss ? 100 : 10;
+                this.maxHp = isBoss ? 10 : 1;
+                this.hp = this.maxHp;
             }
 
             update() {
@@ -294,13 +434,19 @@
                 this.x = this.formation.x + this.relativeX;
                 this.y = this.formation.y + this.relativeY;
 
-                // Disparar si es el momento
-                if (gameFrame % this.fireRate === 0 && player.isAlive) {
+                // Disparar solo si el enemigo está visible en la pantalla
+                // La formación maneja el movimiento, así que verificamos la posición 'y' de la formación
+                if (this.formation.y > -this.height / 2 && gameFrame % this.fireRate === 0 && player.isAlive) {
                     this.shoot();
                 }
             }
             
             shoot() {
+                if (this.isBoss) {
+                    this.bossShoot();
+                    return;
+                }
+                
                 const angle = Math.atan2(player.y - this.y, player.x - this.x);
                 const speed = 3;
                 
@@ -310,28 +456,69 @@
                 const projectile = new Projectile(this.x, this.y + this.height / 2, vx, vy, '#ff0000');
                 enemyProjectiles.push(projectile);
             }
+            
+            // Disparo especial del Minijefe
+            bossShoot() {
+                const speed = 4; 
+                const numProjectiles = 5;
+                const totalArc = Math.PI / 3; 
+                
+                const centralAngle = Math.atan2(player.y - this.y, player.x - this.x);
+
+                for (let i = 0; i < numProjectiles; i++) {
+                    const angleOffset = (i - Math.floor(numProjectiles / 2)) * (totalArc / (numProjectiles - 1));
+                    const angle = centralAngle + angleOffset;
+
+                    const vx = Math.cos(angle) * speed;
+                    const vy = Math.sin(angle) * speed;
+
+                    const projectile = new Projectile(this.x, this.y + this.height / 2, vx, vy, '#ff4500'); 
+                    enemyProjectiles.push(projectile);
+                }
+            }
 
             draw() {
                 if (!this.isAlive) return;
 
                 ctx.fillStyle = this.color;
                 
-                // Dibujar enemigo como un cuadrado/diamante retro
                 ctx.save();
                 ctx.translate(this.x, this.y);
-                ctx.rotate(Math.PI / 4); 
-                ctx.fillRect(-this.width / 2, -this.height / 2, this.width, this.height);
+                
+                if (this.isBoss) {
+                    // Dibujar el cuerpo del jefe
+                    ctx.fillRect(-this.width / 2, -this.height / 2, this.width, this.height);
+                    
+                    // Dibujar barra de vida
+                    const barWidth = 40;
+                    const barHeight = 4;
+                    const healthRatio = this.hp / this.maxHp;
+                    
+                    ctx.fillStyle = '#555555';
+                    ctx.fillRect(-barWidth / 2, this.height / 2 + 5, barWidth, barHeight);
+                    
+                    ctx.fillStyle = healthRatio > 0.3 ? '#00ff00' : '#ff0000';
+                    ctx.fillRect(-barWidth / 2, this.height / 2 + 5, barWidth * healthRatio, barHeight);
+
+                } else {
+                    // Dibujar enemigo normal
+                    ctx.rotate(Math.PI / 4); 
+                    ctx.fillRect(-this.width / 2, -this.height / 2, this.width, this.height);
+                }
                 ctx.restore();
             }
 
             hit() {
-                this.isAlive = false;
-                // Notificar a la formación que un miembro fue destruido
-                this.formation.enemyDestroyed(); 
-                return this.value; // Devuelve la puntuación
+                this.hp--;
+                if (this.hp <= 0) {
+                    this.isAlive = false;
+                    // Notificar a la formación que un miembro fue destruido
+                    this.formation.enemyDestroyed(); 
+                    return this.value; 
+                }
+                return 0; // No suma puntos hasta que muere (excepto el jefe que tiene HP)
             }
             
-            // Método para chequear colisión (requerido para handleCollisions)
              checkCollision(other) {
                 return checkCollision({
                     x: this.x, y: this.y, 
@@ -340,21 +527,25 @@
             }
         }
 
-        // Nueva Clase: Formación de Enemigos (Controla el movimiento del grupo)
+        // Clase: Formación de Enemigos (Controla el movimiento del grupo)
         class EnemyFormation {
-            constructor(groupSize) {
+            constructor(groupSize, isBossFormation = false) {
                 this.x = CANVAS_WIDTH / 2;
-                this.y = -ENEMY_SIZE * 2;
-                this.vx = 1.5; // Velocidad de movimiento lateral
-                this.verticalDrop = 20; // Cuánto baja en cada ciclo
+                this.y = -BOSS_SIZE * 2; // Iniciar arriba
+                this.vx = isBossFormation ? 1.0 : 1.5; 
+                this.verticalDrop = isBossFormation ? 30 : 20; 
                 this.isAlive = true;
                 this.enemies = [];
-                this.initialOffset = (groupSize - 1) * ENEMY_SIZE * 1.5 / 2;
+                this.isBossFormation = isBossFormation;
+                
+                // Distancia entre enemigos
+                const separation = isBossFormation ? BOSS_SIZE * 1.5 : ENEMY_SIZE * 1.5;
+                this.initialOffset = (groupSize - 1) * separation / 2;
                 
                 for (let i = 0; i < groupSize; i++) {
-                    const enemy = new Enemy(0, 0, this);
-                    enemy.relativeX = (i * ENEMY_SIZE * 1.5) - this.initialOffset; // Distribuir en X
-                    enemy.relativeY = 0; // Sin offset vertical inicial
+                    const enemy = new Enemy(0, 0, this, isBossFormation);
+                    enemy.relativeX = (i * separation) - this.initialOffset; 
+                    enemy.relativeY = 0; 
                     this.enemies.push(enemy);
                 }
             }
@@ -364,137 +555,40 @@
                 
                 this.x += this.vx;
                 
-                // Detección de borde lateral (se basa en el enemigo más a la derecha/izquierda)
-                const rightmostEnemyX = this.x + this.initialOffset + ENEMY_SIZE / 2;
-                const leftmostEnemyX = this.x - this.initialOffset - ENEMY_SIZE / 2;
+                const enemySize = this.isBossFormation ? BOSS_SIZE : ENEMY_SIZE;
+                const rightmostEnemyX = this.x + this.initialOffset + enemySize / 2;
+                const leftmostEnemyX = this.x - this.initialOffset - enemySize / 2;
                 
                 let drop = false;
 
                 if (rightmostEnemyX > CANVAS_WIDTH) {
-                    this.vx *= -1; // Cambiar dirección
-                    this.x = CANVAS_WIDTH - this.initialOffset - ENEMY_SIZE / 2; // Ajustar posición
+                    this.vx *= -1; 
+                    this.x = CANVAS_WIDTH - this.initialOffset - enemySize / 2; 
                     drop = true;
                 } else if (leftmostEnemyX < 0) {
-                    this.vx *= -1; // Cambiar dirección
-                    this.x = this.initialOffset + ENEMY_SIZE / 2; // Ajustar posición
+                    this.vx *= -1; 
+                    this.x = this.initialOffset + enemySize / 2; 
                     drop = true;
                 }
                 
                 if (drop) {
-                    this.y += this.verticalDrop; // Bajar una posición
+                    this.y += this.verticalDrop; 
                 }
 
-                // Actualizar a todos los enemigos dentro de la formación
                 this.enemies.forEach(e => e.update());
-                
-                // Filtrar enemigos muertos
                 this.enemies = this.enemies.filter(e => e.isAlive);
                 
-                // Si todos los enemigos han muerto, la formación ya no está viva
                 if (this.enemies.length === 0) {
                     this.isAlive = false;
                 }
             }
 
             draw() {
-                // Dibujar a los enemigos individuales, ellos se encargan de su propio dibujo
                 this.enemies.forEach(e => e.draw());
             }
             
             enemyDestroyed() {
-                 // Si solo quedan enemigos muertos, la formación será eliminada en el próximo update.
-            }
-        }
-
-        // Clase Mini-Jefe
-        class MiniBoss extends Enemy {
-            constructor() {
-                // El jefe es un enemigo que no necesita formación, por eso se pasa 'null'
-                super(CANVAS_WIDTH / 2, -BOSS_SIZE, null); 
-                this.width = BOSS_SIZE;
-                this.height = BOSS_SIZE;
-                this.color = '#ffff00'; // Amarillo
-                this.maxHp = 10;
-                this.hp = this.maxHp;
-                this.value = 100;
-                this.vy = 0.5; // Velocidad de descenso
-                this.fireRate = 50; 
-                this.isBoss = true;
-                this.vx = 1; // Movimiento lateral propio del jefe
-            }
-            
-            update() {
-                 if (!this.isAlive) return;
-                
-                this.y += this.vy;
-                this.x += this.vx;
-
-                // Rebotar en los bordes horizontales
-                if (this.x < this.width / 2 || this.x > CANVAS_WIDTH - this.width / 2) {
-                    this.vx *= -1;
-                }
-
-                // Disparar si es el momento
-                if (gameFrame % this.fireRate === 0 && player.isAlive) {
-                    this.shoot();
-                }
-            }
-
-
-            // Implementación del disparo de 5 balas en arco
-            shoot() {
-                const speed = 4; // Velocidad de los proyectiles del jefe
-                const numProjectiles = 5;
-                const totalArc = Math.PI / 3; // Arco de 60 grados 
-                
-                // Calcular el ángulo central hacia el jugador
-                const centralAngle = Math.atan2(player.y - this.y, player.x - this.x);
-
-                for (let i = 0; i < numProjectiles; i++) {
-                    // Calcular el desplazamiento angular: -2, -1, 0, 1, 2
-                    const angleOffset = (i - Math.floor(numProjectiles / 2)) * (totalArc / (numProjectiles - 1));
-                    const angle = centralAngle + angleOffset;
-
-                    const vx = Math.cos(angle) * speed;
-                    const vy = Math.sin(angle) * speed;
-
-                    // Color distintivo para las balas del jefe
-                    const projectile = new Projectile(this.x, this.y + this.height / 2, vx, vy, '#ff4500'); 
-                    enemyProjectiles.push(projectile);
-                }
-            }
-
-            draw() {
-                // Dibujar el cuerpo del jefe (Un cuadrado grande)
-                ctx.fillStyle = this.color;
-                ctx.fillRect(this.x - this.width / 2, this.y - this.height / 2, this.width, this.height);
-                
-                // Dibujar ojos (detalle)
-                ctx.fillStyle = '#ff0000';
-                ctx.fillRect(this.x - 10, this.y - 5, 5, 5);
-                ctx.fillRect(this.x + 5, this.y - 5, 5, 5);
-                
-                // Dibujar barra de vida
-                const barWidth = 40;
-                const barHeight = 4;
-                const healthRatio = this.hp / this.maxHp;
-                
-                // Fondo de la barra de vida
-                ctx.fillStyle = '#555555';
-                ctx.fillRect(this.x - barWidth / 2, this.y + this.height / 2 + 5, barWidth, barHeight);
-                
-                // Vida actual
-                ctx.fillStyle = healthRatio > 0.3 ? '#00ff00' : '#ff0000';
-                ctx.fillRect(this.x - barWidth / 2, this.y + this.height / 2 + 5, barWidth * healthRatio, barHeight);
-            }
-
-            hit() {
-                this.hp--;
-                if (this.hp <= 0) {
-                    this.isAlive = false;
-                    return this.value;
-                }
-                return 0; // No suma puntos hasta que muere
+                 // La lógica de eliminación se maneja en el update()
             }
         }
 
@@ -505,20 +599,19 @@
                 this.y = y;
                 this.width = 15;
                 this.height = 15;
-                this.type = type; // 'speed', 'fireRate', 'multiShot'
-                this.vy = 1; // Desciende lentamente
+                this.type = type; // 'minion', 'multiShot', 'life'
+                this.vy = 1; 
                 this.readyToDie = false;
                 
-                // Configurar color y símbolo
-                if (type === 'speed') {
-                    this.color = '#ffff00'; // Amarillo
-                    this.symbol = 'S';
-                } else if (type === 'fireRate') {
-                    this.color = '#ff00ff'; // Magenta
-                    this.symbol = 'F';
-                } else { // multiShot
-                    this.color = '#00ffff'; // Cían
+                if (type === 'minion') {
+                    this.color = '#ff8c00'; // Naranja para minion
                     this.symbol = 'M';
+                } else if (type === 'multiShot') {
+                    this.color = '#00ffff'; 
+                    this.symbol = 'W'; // W for Wide shot (disparo amplio)
+                } else { // life
+                    this.color = '#00ff00'; 
+                    this.symbol = '+1';
                 }
             }
 
@@ -534,7 +627,7 @@
                 ctx.fillRect(this.x - this.width / 2, this.y - this.height / 2, this.width, this.height);
                 
                 ctx.fillStyle = '#000000';
-                ctx.font = '12px "Press Start 2P"';
+                ctx.font = '10px "Press Start 2P"';
                 ctx.textAlign = 'center';
                 ctx.fillText(this.symbol, this.x, this.y + 4);
             }
@@ -544,13 +637,19 @@
         // === FUNCIONES DE JUEGO ===
 
         function initGame() {
+            // Guardar el récord al final de la partida anterior
+            if (score > highscore) {
+                highscore = score;
+                localStorage.setItem('highscore', highscore);
+            }
+            
             // Reiniciar el estado
             score = 0;
             gameFrame = 0;
             lives = INITIAL_LIVES;
             isGameOver = false;
-            formations = []; // Usar formaciones en lugar de enemigos directos
-            miniBoss = null;
+            formations = []; 
+            miniBossFormations = [];
             powerUps = [];
             playerProjectiles = [];
             enemyProjectiles = [];
@@ -565,16 +664,24 @@
         }
 
         function spawnFormation() {
-            formations.push(new EnemyFormation(FORMATION_GROUP_SIZE));
-        }
-        
-        function spawnBoss() {
-            miniBoss = new MiniBoss();
+            // Siempre aparece una formación normal
+            formations.push(new EnemyFormation(FORMATION_GROUP_SIZE, false)); 
+            
+            // 10% de probabilidad de que aparezca una formación de minijefes
+            if (Math.random() < 0.1) { 
+                miniBossFormations.push(new EnemyFormation(FORMATION_GROUP_SIZE, true));
+            }
         }
         
         function spawnRandomPowerUp(x, y) {
-            const types = ['speed', 'fireRate', 'multiShot'];
-            const type = types[randomInt(0, types.length - 1)];
+            // 20% de probabilidad de drop en total
+            if (Math.random() < 0.8) return; 
+            
+            let types = ['minion', 'multiShot', 'life']; // 'speed' eliminado, 'fireRate' renombrado a 'minion'
+            
+            const typeIndex = randomInt(0, types.length - 1);
+            const type = types[typeIndex];
+            
             powerUps.push(new PowerUp(x, y, type));
         }
 
@@ -587,18 +694,20 @@
         }
 
         function handleCollisions() {
-            // Recoger todos los enemigos individuales de las formaciones
-            const allEnemies = formations.flatMap(f => f.enemies).concat(miniBoss && miniBoss.isAlive ? [miniBoss] : []);
+            // Recoger todos los enemigos individuales de todas las formaciones
+            const allEnemies = formations.flatMap(f => f.enemies).concat(miniBossFormations.flatMap(f => f.enemies));
 
-            // 1. Proyectiles del jugador vs Enemigos y Jefe
+            // 1. Proyectiles del jugador vs Enemigos
             playerProjectiles.forEach(p => {
                 allEnemies.forEach(e => {
                     if (!p.readyToDie && e.isAlive && e.checkCollision(p)) {
                         p.readyToDie = true;
-                        score += e.hit();
+                        const scoreIncrease = e.hit();
+                        score += scoreIncrease;
                         
-                        // 1 de cada 5 enemigos suelta un power-up
-                        if (e.isBoss === false && !e.isAlive && randomInt(1, 5) === 1) {
+                        // Si un enemigo/jefe muere, hay chance de soltar power-up
+                        if (!e.isAlive && scoreIncrease > 0) {
+                            // Se llama sin el parámetro isBoss, ya que el drop rate es fijo (20%)
                             spawnRandomPowerUp(e.x, e.y);
                         }
                     }
@@ -607,7 +716,7 @@
 
             // 2. Proyectiles enemigos vs Jugador
             enemyProjectiles.forEach(p => {
-                if (player.isAlive && Date.now() >= player.invulnerabilityTime && !p.readyToDie && checkCollision(p, player)) {
+                if (player.isAlive && !player.isInvulnerable() && !p.readyToDie && checkCollision(p, player)) {
                     p.readyToDie = true;
                     player.hit();
                 }
@@ -615,8 +724,11 @@
 
             // 3. Enemigos vs Jugador (Contacto directo)
             allEnemies.forEach(e => {
-                if (player.isAlive && Date.now() >= player.invulnerabilityTime && e.isAlive && e.checkCollision(player)) {
+                if (player.isAlive && !player.isInvulnerable() && e.isAlive && e.checkCollision(player)) {
+                    // El enemigo es destruido por la colisión
                     e.isAlive = false;
+                    // La formación será notificada y limpiada en el siguiente update
+                    e.formation.enemyDestroyed(); 
                     player.hit();
                 }
             });
@@ -639,47 +751,71 @@
             ctx.textAlign = 'right';
             ctx.fillText(`VIDAS: ${lives}`, CANVAS_WIDTH - 10, 20);
             
+            // Marcador de último récord
+            ctx.fillStyle = '#ffff00';
+            ctx.textAlign = 'center';
+            ctx.fillText(`RECORD: ${highscore}`, CANVAS_WIDTH / 2, 20);
+
             // Mostrar estado de Power-ups
             ctx.font = '6px "Press Start 2P"';
             ctx.textAlign = 'left';
             
             let puY = 35;
-            if (player.isMultiShot) {
-                ctx.fillStyle = '#00ffff';
-                ctx.fillText(`MULTIDISPARO (M)`, 10, puY);
+            
+            const currentTime = Date.now();
+
+            if (currentTime < player.tempShieldEndTime) {
+                ctx.fillStyle = '#ffff00';
+                const remaining = Math.ceil((player.tempShieldEndTime - currentTime) / 1000);
+                ctx.fillText(`ESCUDO: ${remaining}s`, 10, puY);
+                puY += 10;
+            } else if (player.isInvulnerable() && currentTime < player.invulnerabilityTime) {
+                ctx.fillStyle = '#ffffff';
+                ctx.fillText(`INVULNERABLE`, 10, puY);
                 puY += 10;
             }
             
-            const currentTime = Date.now();
-            if (currentTime < player.tempSpeedBoostEndTime) {
-                ctx.fillStyle = '#ffff00';
-                const remaining = Math.ceil((player.tempSpeedBoostEndTime - currentTime) / 1000);
-                ctx.fillText(`VELOCIDAD (S): ${remaining}s`, 10, puY);
+            if (player.isMultiShot) {
+                ctx.fillStyle = '#00ffff';
+                ctx.fillText(`MULTIDISPARO (W)`, 10, puY);
                 puY += 10;
             }
-            if (currentTime < player.tempFireRateBoostEndTime) {
-                ctx.fillStyle = '#ff00ff';
-                const remaining = Math.ceil((player.tempFireRateBoostEndTime - currentTime) / 1000);
-                ctx.fillText(`CADENCIA (F): ${remaining}s`, 10, puY);
+            
+            // Estado de Minions (reemplaza a Velocidad y Cadencia)
+            if (player.minions.length > 0) {
+                ctx.fillStyle = '#ff8c00';
+                const firstMinion = player.minions[0];
+                const remaining = Math.ceil((firstMinion.endTime - currentTime) / 1000);
+                ctx.fillText(`MINIONS: ${player.minions.length} (${remaining}s)`, 10, puY);
             }
         }
 
         function drawGameOver() {
+            // Asegurarse de actualizar el highscore antes de dibujar
+            if (score > highscore) {
+                highscore = score;
+                localStorage.setItem('highscore', highscore);
+            }
+
             ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
             ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
             ctx.fillStyle = '#ff0000';
             ctx.textAlign = 'center';
             ctx.font = '30px "Press Start 2P"';
-            ctx.fillText('FIN DEL JUEGO', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 30);
+            ctx.fillText('FIN DEL JUEGO', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 40);
             
             ctx.fillStyle = '#00ffff';
             ctx.font = '10px "Press Start 2P"';
-            ctx.fillText(`PUNTUACIÓN FINAL: ${score}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 10);
+            ctx.fillText(`PUNTUACIÓN FINAL: ${score}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 0);
             
+            ctx.fillStyle = '#ffff00';
+            ctx.font = '10px "Press Start 2P"';
+            ctx.fillText(`RÉCORD MÁXIMO: ${highscore}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 20);
+
             ctx.fillStyle = '#00ff00';
             ctx.font = '10px "Press Start 2P"';
-            ctx.fillText('CLIC PARA REINICIAR', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 50);
+            ctx.fillText('CLIC PARA REINICIAR', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 60);
         }
 
         // === CICLO PRINCIPAL DEL JUEGO ===
@@ -691,18 +827,14 @@
 
             if (!isGameOver) {
                 // 2. Lógica de Spawning (aparición de formaciones y jefe)
-                if (miniBoss === null && score >= 50) {
-                    spawnBoss();
-                } else if (miniBoss === null || !miniBoss.isAlive) {
-                    if (gameFrame % ENEMY_SPAWN_RATE === 0) {
-                        spawnFormation();
-                    }
+                if (gameFrame % ENEMY_SPAWN_RATE === 0) {
+                    spawnFormation();
                 }
 
                 // 3. Actualizar entidades
                 player.update();
                 formations.forEach(f => f.update());
-                if (miniBoss && miniBoss.isAlive) miniBoss.update();
+                miniBossFormations.forEach(f => f.update());
                 powerUps.forEach(pu => pu.update());
                 playerProjectiles.forEach(p => p.update());
                 enemyProjectiles.forEach(p => p.update());
@@ -711,22 +843,19 @@
                 handleCollisions();
 
                 // 5. Filtrar (eliminar) entidades
-                // Eliminar formaciones que ya no están vivas o están fuera de la pantalla
-                formations = formations.filter(f => f.isAlive && f.y < CANVAS_HEIGHT); 
+                formations = formations.filter(f => f.isAlive && f.y < CANVAS_HEIGHT + 100); 
+                miniBossFormations = miniBossFormations.filter(f => f.isAlive && f.y < CANVAS_HEIGHT + 100);
                 powerUps = powerUps.filter(pu => !pu.readyToDie);
                 playerProjectiles = playerProjectiles.filter(p => !p.readyToDie);
                 enemyProjectiles = enemyProjectiles.filter(p => !p.readyToDie);
                 
-                // Si el jefe murió, reiniciar la variable
-                if (miniBoss && !miniBoss.isAlive) miniBoss = null;
-
                 // 6. Dibujar entidades
                 formations.forEach(f => f.draw());
-                if (miniBoss && miniBoss.isAlive) miniBoss.draw();
+                miniBossFormations.forEach(f => f.draw());
                 powerUps.forEach(pu => pu.draw());
                 playerProjectiles.forEach(p => p.draw());
                 enemyProjectiles.forEach(p => p.draw());
-                player.draw();
+                player.draw(); // El jugador dibuja a sus minions
 
                 // 7. Dibujar Interfaz
                 drawScore();
@@ -745,7 +874,6 @@
         // Rastrea la posición del mouse
         canvas.addEventListener('mousemove', (e) => {
             const rect = canvas.getBoundingClientRect();
-            // Calcular posición relativa al canvas
             const scaleX = canvas.width / rect.width;
             const scaleY = canvas.height / rect.height;
             mouseX = (e.clientX - rect.left) * scaleX;
@@ -773,7 +901,6 @@
             const containerWidth = container.clientWidth;
             const containerHeight = container.clientHeight;
 
-            // Asegurar que el canvas use el espacio disponible en el contenedor
             const aspectRatio = CANVAS_WIDTH / CANVAS_HEIGHT;
             let targetWidth = containerWidth;
             let targetHeight = containerWidth / aspectRatio;
